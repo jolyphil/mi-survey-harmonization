@@ -1,0 +1,289 @@
+---
+title: Using multiple imputation to improve the harmonization of repeated cross-national
+  surveys
+author: "Philippe Joly, BGSS, Humboldt-Universität zu Berlin"
+date: "March 2018"
+output:
+  html_document:
+    includes:
+      before_body: doc_prefix.html
+  pdf_document: default
+bibliography: ref.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+---
+
+![&nbsp;](ccby.png)
+
+**This vignette was prepared as part of the [Fellowship Freies Wissen](https://wikimedia.de/wiki/BildungWissenschaftKultur/Fellowprogramm) sponsored by Wikimedia Deutschland, the Stifterverband, and the VolkswagenStiftung. The content is under a [CC BY 4.0 license](https://creativecommons.org/licenses/by/4.0/). The vignette was writen in R markdown and the original script is available on my [GitHub page](https://github.com/jolyphil/mi-survey-harmonization). Comments are welcome.**
+
+---
+
+# Missing data in repeated cross-national surveys 
+
+Missing data is a ubiquitous problem when analyzing cross-national social and political surveys. Data is said to be "sporadically missing" when respondents cannot or decline to answer certain questions [@resche-rigon_multiple_2016]. With repeated cross-national surveys, another concern is that questionnaires might change over time. In new survey waves, some questions might be introduced; other might be rephrased or discontinued. Data is then "systematically missing" in some country-waves [@resche-rigon_multiple_2016]. This makes it particularly challenging for scholars to track the evolution of beliefs, attitudes, and behavior within certain populations over time. 
+
+Since the 1980s, there has been a rapid increase in the number of international social and political surveys. Large projects such as the [European Social Survey (ESS)](http://www.europeansocialsurvey.org/), the [International Social Survey Programme (ISSP)](http://www.issp.org/), the [European Values Study (EVS)](http://www.europeanvaluesstudy.eu/), and the [World Values Survey (WVS)](http://www.worldvaluessurvey.org/) have together collected responses from hundreds of thousands of respondents in the last thirty years. Some research teams have now taken on the task of harmonizing this data [see @neundorf_global_2017; @slomczynski_survey_2017]. 
+
+In order to perform longitudinal analyses with repeated cross-national surveys, scholars have typically coped with the problem of systematically missing data by relying on listwise deletion — therefore, ignoring all observations with missing data — or by using informed guesses to fill in the missing observations. Both solutions have their disadvantages. Listwise deletion is inefficient as it forces the investigator to discard valuable information. It can also introduce biases if the observations are not "missing completely at random" (MCAR) [@rubin_multiple_1987]. The "guessing" strategy, whether it is based on theoretical assumptions or empirical estimations (mean imputation, predicted values from regressions), underestimates the uncertainty of the guesses. Analyzing this data will produce artificially low standard errors [for a good review of the topic, see @king_analyzing_2001].
+
+In this vignette, I would like to demonstrate a technique I have been using in my dissertation to handle this type of problem: multiple imputation (MI). I build on a long tradition in survey research showing that MI is usually a more efficient and less biased way to handle missing data than listwise deletion and single imputation methods. I present a typical case of systematically missing data in repeated cross-national surveys and illustrate how I would go around it by performing the analysis with MI data in R. The MICE package performs multiple imputation using fully conditional specification (FCS) [@van_buuren_mice:_2011].
+
+# A demonstration with the R MICE package and data from the European Values Study
+
+The European Values Study (EVS) is a large multinational survey project examining European citizens' ideas and behavior in many areas of life such as "family, work, religion, politics and society" [@evs_about_2017]. So far, four EVS waves have been published (the fifth wave is ongoing): 1) in 1981-1984, 2) in 1990-1993, 3) in 1999-2001, and 4) in 2008-2010. 
+
+One problem when analyzing EVS longitudinal data is that the way the education of respondents is measured changed over the course of the study. In the first two waves, the EVS only asked respondents at what age they completed their education. In the subsequent waves, it also asked respondents what was their highest level of education. Most social scientists recognize that the level of education is a better indicator of socio-economic status. If we want to use this variable in our analyses, we either have to discard the first two waves or impute the missing values. 
+
+Let's first have a look at a subset of the EVS data. You can download the EVS Longitudinal datafile, 1981-2008 (ZA4804 Data file, Version 3.0.0) from the [GESIS website](https://dbk.gesis.org/dbksearch/SDesc2.asp?ll=10&notabs=&af=&nf=&search=&search2=&db=E&no=4804) and save it in your working directory. In this example, I use the .dta (Stata) file. 
+
+## Data preparation
+
+In R, I start by loading the packages necessary for this demonstration (if needed, install them with the function `install.packages()`). 
+
+```{r load_packages, message = FALSE}
+library(dplyr) # used for data wrangling
+library(ggplot2) # used for data visualization
+library(haven) # used to import Stata and SPSS files
+library(magrittr) # allows pipe operator
+library(mice) # performs MI
+library(miceadds) # allows GLM with cluster corrected SE
+library(multiwayvcov) # needed with miceadds
+```
+
+After, I load a subset the EVS dataset in the R working environment. The `read_dta()` function from the `haven` package allows to import .dta files in R. 
+
+```{r filepath}
+#_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+# Set path to EVS data
+datapath <- "ZA4804_v3-0-0.dta"
+```
+
+```{r select_path, include=FALSE}
+pathtofile <- c("C:/Users/jolyphil/Documents/Data/article1/data/raw/EVS_longitudinal/ZA4804_v3-0-0.dta", 
+              "/media/philippe/Fichiers/Data/ZA4804_v3-0-0.dta",
+              "E:/Data/ZA4804_v3-0-0.dta")
+datapath <- pathtofile[3]
+```
+
+```{r load_data}
+
+
+#_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+# Load a subset of variables
+evs <- datapath %>%
+  
+  # Convert Stata datafile to R dataframe
+  read_dta %>%
+  
+  # Keep only a subset of variables
+  select(S002EVS, S003A, S024, E027, X001, X003, X023, X025R) %>%
+  
+  # Rename variables
+  rename(wave = S002EVS, country = S003A, countrywave = S024, 
+         demonstration = E027, women = X001, age = X003, 
+         eduage = X023, edulvl = X025R)
+```
+
+I select a few variables to work with:
+
+* `wave`: the EVS wave (1 to 4)
+* `country`: a country id
+* `countrywave`: a country-wave id
+* `demonstration`: a question on participation in lawful demonstrations
+* `women`: gender
+* `age`: age
+* `eduage`: age at which respondents completed their education
+* `edulvl`: highest level of education attained by respondents; three levels: 1) low (primary), 2) middle (secondary), and 3) high (tertiary). 
+
+The variable `demonstration` has currently three levels. When asked about their participation in lawful demonstrations, respondents had a choice between three possible answers: 1) they _have done_ it at least once, 2) they _would do_ it if needed, or 3) they _would never do_ it. For clarity and simplicity, we can recode the variable as dichotomous: 0) not done, 1) done. 
+
+```{r recode_demonstration}
+evs <- evs %>% 
+  mutate(demonstration = case_when(demonstration == 2 | demonstration == 3 ~ 0,
+                           demonstration == 1 ~ 1, 
+                           TRUE ~ NA_real_))
+evs$demonstration <- factor(evs$demonstration,
+                    levels = c(0,1),
+                    labels = c("Not done", "Done"))
+```
+
+In addition, I reduce the sample to respondents of countries which were part of all four EVS waves. 
+
+```{r reduce_sample}
+evs <- evs %>% 
+  group_by(country, wave) %>% 
+  summarize(tag_wave = 1) %>% 
+  group_by(country) %>%
+  summarize(keep = sum(tag_wave) == 4) %>%
+  merge(evs) %>%
+  filter(keep == T) %>%
+  select(-one_of("keep"))
+```
+
+Finally, I also change the class of a few variables, from `labelled` to `factor`.
+
+```{r recode_factors}
+evs <- evs %>% 
+  mutate(country = droplevels(as_factor(country)),
+         wave = droplevels(as_factor(wave)),
+         countrywave = droplevels(as_factor(countrywave)),
+         women = droplevels(as_factor(women)),
+         edulvl = droplevels(as_factor(edulvl)))
+```
+
+```{r define_N, echo=FALSE}
+N_obs <- as.integer(count(evs))
+N_countries <- evs %>% 
+  group_by(country) %>% 
+  summarize(tag_country = 1) %>% 
+  summarize(sum(tag_country)) %>%
+  as.integer
+```
+
+We now have `r N_obs` respondents from `r N_countries` countries (including West Germany and Northern Ireland as "countries").
+
+```{r print_freqtable}
+table(evs$country, evs$wave)
+```
+
+## Missing patterns
+
+We can now start investigating patterns of missingness in the data using the function `md.pattern()` from the `mice` package.
+
+```{r print_misstable}
+misstable <- md.pattern(evs)
+# exclude columns for country, wave, countrywave: zero missing.
+misstable[, 4:ncol(misstable)]
+```
+
+```{r save_misstable_values, echo=FALSE}
+misstable <- md.pattern(evs)
+miss_total <- misstable[nrow(misstable), ncol(misstable)] %>% as.integer
+miss_edulvl <- misstable[nrow(misstable), "edulvl"] %>% as.integer
+miss_zero <- row.names(misstable)[1] %>% as.integer
+miss_edulvl_only <- row.names(misstable)[6] %>% as.integer
+```
+
+The table above combines both sporadically and systematically missing data. We can see that `r miss_zero` observations have no missing values. Out of all `r miss_total` missing values, `r miss_edulvl` values are missing for the variable `edulvl`. `r miss_edulvl_only` observations have a missing value _only_ for this variable. 
+
+The code below produces a new aggregate dataframe identifying which questions are entirely missing in certain country-waves.
+
+```{r systematically_missing}
+#_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+# Function: determine if all observations are missing in cluster
+
+allmiss <- function(var) {
+  r <- (sum(!is.na(var)) == 0)
+  return(r)
+}
+
+#_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+# Create summary dataset showing country-waves where variables are 
+# entirely missing
+
+mdsummary <- evs %>%
+  group_by(countrywave) %>%
+  summarize(
+    miss_demonstration = allmiss(demonstration), 
+    miss_women = allmiss(women), 
+    miss_age = allmiss(age), 
+    miss_edulvl = allmiss(edulvl), 
+    miss_eduage = allmiss(eduage)
+    )
+
+summary(mdsummary[, 2:ncol(mdsummary)]) 
+```
+
+The variable `edulvl` is the only one with systematically missing values. In half of the 52 country-waves, respondents were not asked about their highest level of education. 
+
+Fortunately, in all the country-waves, respondents were asked about the age at which they completed their education. `eduage` probably gives us a good grasp of the educational attainment of respondents. Let's examine this graphically. 
+
+```{r histogram}
+g <- ggplot(data=subset(evs, !is.na(edulvl) & !is.na(eduage)), 
+            aes(x = as.numeric(eduage), fill = edulvl))
+g <- g + geom_histogram(position="identity", alpha = 0.5, binwidth = 2)
+g <- g + labs(x = "Age, completed education", y = "Number of observations")
+g <- g + scale_fill_discrete(name = "Level of education")
+g
+```
+
+What do we see? Respondents who completed their education at an older age have a higher level of education in general. However, there is significant overlap between the three categories. If we were to fill in the missing values of `edulvl` on the basis of `eduage` in a single imputation, we would underestimate the uncertainty of our estimates. With multiple imputation, we can fill in the missing data while preserving the uncertainty of the imputations. 
+
+## Generating MI datasets
+
+Results from analyses with MI data are said to be unbiased if data is "Missing at random" (MAR), that is, if unobserved variables are uncorrelated with the missing mechanism. The example introduced here is a plausible MAR case. 
+
+Analyzing multiply imputed data involves three steps:
+
+1. _Generate m new datasets with imputed data._ Each dataset contains the same initial, non-missing values, but different imputed values that vary across the mi datasets to reflect the uncertainty of our predictions. 
+2. _Fit separate statistical models on each mi dataset._
+3. _Pool the results following Rubin's rules_ [@rubin_multiple_1987; @king_analyzing_2001]
+
+`mice` is a powerful and well-documented R package to perform these operations. It uses chained equations to impute separately each variable with missing values. It works well with continuous, binary, unordered categorical, and ordered categorical data. An excellent resource to learn how to use the package are the six vignettes prepared by Gerko Vink and Stef van Buuren in `mice`'s official documentation [@vink_online_nodate].
+
+Let's explore how `mice` would impute the EVS data. To see the default settings without actually imputating anything, we simply have to run the `mice()` function with the number of iterations (`maxit`) set to zero. The argument `meth` indicates which univariate imputation method will be used for each variable with missing values. 
+
+```{r imp_meth_default}
+ini <- mice(evs, maxit = 0)
+meth <- ini$meth
+meth 
+```
+
+By default, `mice()` performs predictive mean matching (`pmm`) for numeric variables, logistic regression imputation (`logreg`) for boolean variables and factors with two levels, and polytomous regression imputation (`polyreg`) for unordered factors with more than two levels. We can keep all the default settings except for `edulvl` since this variable is ordered. We can estimate a proportional odds model (`polr`) instead.
+
+```{r imp_meth_change}
+meth["edulvl"] <- "polr"
+meth
+```
+
+We can now have a look at the predictors for each equation. 
+
+```{r imp_pred_default}
+pred <- ini$pred
+pred
+```
+
+To fill in the missing values in each incomplete variable, `mice()` will use all remaining variables in the model. This is usually a good strategy since it improves our leverage to predict the missing data. With systematically missing data, however, we have to exclude `countrywave` from the set of predictors since `edulvl` is entirely missing in certain country-waves. We keep country and wave dummies. 
+
+```{r imp_pred_change}
+pred[, c("countrywave")] <- 0
+pred
+```
+
+We are now ready to generate _m_ MI datasets. A higher number of imputed datasets will make statistical estimates more stable. Since our number of observations is relatively high, let's limit _m_ to a reasonable number, 5 (the default). We can also set a `seed` to make the results reproducible. 
+
+```{r imp_generate_midata, message = FALSE}
+imp <- mice(evs, m = 5, meth = meth, pred = pred, seed = 123, print = FALSE)
+```
+
+## Fitting separate models and pooling the results
+
+I complete this vignette by performing a logistic regression to predict participation in lawful demonstrations by levels of education and other indepent variables. We can use the functions `mids2datlist()` and `glm.cluster()` from the `miceadds` package to account for the intra-cluster correlation within country-waves. We perform the model on each mi dataset.
+
+```{r mi_estimate}
+datlist <- miceadds::mids2datlist(imp)
+
+mod <- lapply(datlist, FUN = function(data){
+  miceadds::glm.cluster(data = data, 
+              formula = demonstration ~ women + age + edulvl + country + wave, 
+              cluster = "countrywave" , 
+              family="binomial")
+            })
+# extract parameters and covariance matrix
+betas <- lapply(mod, FUN = function(rr){coef(rr)})
+vars <- lapply(mod, FUN = function(rr){vcov(rr)})
+```
+
+Finally, we pool the results.
+
+```{r mi_pool}
+summary(miceadds::pool_mi(qhat=betas, u=vars))
+```
+
+This procedure has allowed us to analyze the entire dataset rather than just the last two waves. The analysis now covers the period from 1981 to 2010 instead of 1999 to 2010.
+
+# References
