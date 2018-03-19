@@ -18,7 +18,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ![&nbsp;](ccby.png)
 
-**This vignette was prepared as part of the [Fellowship Freies Wissen](https://wikimedia.de/wiki/BildungWissenschaftKultur/Fellowprogramm) sponsored by Wikimedia Deutschland, the Stifterverband, and the VolkswagenStiftung. The content is under a [CC BY 4.0 license](https://creativecommons.org/licenses/by/4.0/). The vignette was writen in R markdown and the original script is available on my [GitHub page](https://github.com/jolyphil/mi-survey-harmonization). Comments are welcome.**
+**This vignette was prepared as part of the [Fellowship Freies Wissen](https://wikimedia.de/wiki/BildungWissenschaftKultur/Fellowprogramm) sponsored by Wikimedia Deutschland, the Stifterverband, and the VolkswagenStiftung. The content is under a [CC BY 4.0 license](https://creativecommons.org/licenses/by/4.0/). The vignette was writen in R markdown and the original script is available on my [GitHub page](https://github.com/jolyphil/mi-survey-harmonization). Comments and pull requests are welcome.**
+
+**[R markdown](https://rmarkdown.rstudio.com/) documents are a form of [literate programming](https://en.wikipedia.org/wiki/Literate_programming). By weaving natural language and code together in a single text file, literate programming makes research more transparent and reproducible. It is also an excellent tool for the development of [Open educational resources (OER)](https://en.wikipedia.org/wiki/Open_educational_resources).**
 
 ---
 
@@ -30,9 +32,11 @@ Since the 1980s, there has been a rapid increase in the number of international 
 
 In order to perform longitudinal analyses with repeated cross-national surveys, scholars have typically coped with the problem of systematically missing data by relying on listwise deletion — therefore, ignoring all observations with missing data — or by using informed guesses to fill in the missing observations. Both solutions have their disadvantages. Listwise deletion is inefficient as it forces the investigator to discard valuable information. It can also introduce biases if the observations are not "missing completely at random" (MCAR) [@rubin_multiple_1987]. The "guessing" strategy, whether it is based on theoretical assumptions or empirical estimations (mean imputation, predicted values from regressions), underestimates the uncertainty of the guesses. Analyzing this data will produce artificially low standard errors [for a good review of the topic, see @king_analyzing_2001].
 
-In this vignette, I would like to demonstrate a technique I have been using in my dissertation to handle this type of problem: multiple imputation (MI). I build on a long tradition in survey research showing that MI is usually a more efficient and less biased way to handle missing data than listwise deletion and single imputation methods. I present a typical case of systematically missing data in repeated cross-national surveys and illustrate how I would go around it by performing the analysis with MI data in R. The MICE package performs multiple imputation using fully conditional specification (FCS) [@van_buuren_mice:_2011].
+**How can we improve the harmonization of repeated cross-national surveys?**
 
-# A demonstration with the R MICE package and data from the European Values Study
+In this vignette, I would like to demonstrate a technique I have been using in my dissertation to handle this type of problem: multiple imputation (MI). I build on a long tradition in survey research showing that MI is usually a more efficient and less biased way to handle missing data than listwise deletion and single imputation methods. Multiple imputation has been considered an appropritate solution to account for mismatches across survey questionnaires because, while it uses the entire sample (and therefore does not discard valuable data), it also preserves _uncertainties_ of the imputation process [@caren_social_2011; @king_analyzing_2001]. I present a typical case of systematically missing data in repeated cross-national surveys and illustrate how I would go around it by performing the analysis with MI data in R. The `mice` package performs multiple imputation using fully conditional specification (FCS) [@van_buuren_mice:_2011].
+
+# A demonstration with the R `mice` package and data from the European Values Study
 
 The European Values Study (EVS) is a large multinational survey project examining European citizens' ideas and behavior in many areas of life such as "family, work, religion, politics and society" [@evs_about_2017]. So far, four EVS waves have been published (the fifth wave is ongoing): 1) in 1981-1984, 2) in 1990-1993, 3) in 1999-2001, and 4) in 2008-2010. 
 
